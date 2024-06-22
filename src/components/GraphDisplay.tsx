@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as d3 from 'd3';
+import { NetworkGraphData } from '../App';
 
-// Update Node interface to match the structure from xmlParser.ts
+// Keep existing interfaces (Node, Edge, GraphData, Filters)
 interface Node {
   id: string;
   type: string;
@@ -12,7 +13,6 @@ interface Node {
   y?: number;
 }
 
-// Update Edge interface to match the structure from xmlParser.ts
 interface Edge {
   source: string;
   target: string;
@@ -20,7 +20,6 @@ interface Edge {
   function: string | null;
 }
 
-// Update GraphData interface to match the structure from xmlParser.ts
 interface GraphData {
   nodes: { [key: string]: Node };
   edges: Edge[];
@@ -32,10 +31,11 @@ interface Filters {
 }
 
 interface GraphDisplayProps {
-  graphData: GraphData;
+  graphData: NetworkGraphData;
+  selectedWords: string[];
 }
 
-const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData }) => {
+const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData, selectedWords }) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [filters, setFilters] = useState<Filters>({ nodes: [], edges: [] });
   const [egoCenter, setEgoCenter] = useState<string | null>(null);
@@ -43,21 +43,26 @@ const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData }) => {
 
   // Set the first node as the default ego center
   useEffect(() => {
-    const nodeIds = Object.keys(graphData.nodes);
-    if (nodeIds.length > 0) {
-      setEgoCenter(nodeIds[0]);
-    } else {
-      setEgoCenter(null);
+    if (graphData && graphData.nodes) {
+      const nodeIds = Object.keys(graphData.nodes);
+      if (nodeIds.length > 0) {
+        setEgoCenter(nodeIds[0]);
+      } else {
+        setEgoCenter(null);
+      }
     }
   }, [graphData]);
 
   const uniqueNodeTypes = useMemo(() => {
-    return [...new Set(Object.values(graphData.nodes).map((node) => node.type))];
+    if (!graphData || !graphData.nodes) return [];
+    return [
+      ...new Set(Object.values(graphData.nodes).map((node) => node.type)),
+    ];
   }, [graphData]);
 
   const filteredData = useMemo(() => {
-    let nodes = Object.values(graphData.nodes);
-    let edges = graphData.edges;
+    let nodes = Object.values(graphData?.nodes || {});
+    let edges = graphData?.edges || [];
 
     if (filters.nodes.length > 0) {
       nodes = nodes.filter((node) => filters.nodes.includes(node.type));
@@ -106,16 +111,16 @@ const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData }) => {
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    const width = 800;
-    const height = 600;
+    const width = svg.node()?.getBoundingClientRect().width || 800;
+    const height = svg.node()?.getBoundingClientRect().height || 600;
 
     const simulation = d3
-      .forceSimulation(filteredData.nodes)
+      .forceSimulation(filteredData.nodes as d3.SimulationNodeDatum[])
       .force(
         'link',
-        d3.forceLink<Node, Edge>(filteredData.edges).id((d) => d.id),
+        d3.forceLink<d3.SimulationNodeDatum, d3.SimulationLinkDatum<d3.SimulationNodeDatum>>(filteredData.edges).id((d) => (d as Node).id),
       )
-      .force('charge', d3.forceManyBody().strength(-200))
+      .force('charge', d3.forceManyBody().strength(-100))
       .force('center', d3.forceCenter(width / 2, height / 2));
 
     const link = svg
@@ -134,17 +139,23 @@ const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData }) => {
       .enter()
       .append('g');
 
-    nodeGroup.append('circle')
+    nodeGroup
+      .append('circle')
       .attr('r', 5)
-      .attr('fill', (d) => (d.id === egoCenter ? '#ff0000' : '#1f77b4'));
+      .attr('fill', (d) => 
+        selectedWords.includes(d.nuclearLemmas) ? '#ff0000' : 
+        (d.id === egoCenter ? '#ff8c00' : '#1f77b4')
+      );
 
-    nodeGroup.append('text')
+    nodeGroup
+      .append('text')
       .attr('dy', -10)
       .attr('text-anchor', 'middle')
       .text((d) => d.type)
       .attr('font-size', '10px');
 
-    nodeGroup.append('text')
+    nodeGroup
+      .append('text')
       .attr('dy', 15)
       .attr('text-anchor', 'middle')
       .text((d) => d.nuclearLemmas)
@@ -158,20 +169,20 @@ const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData }) => {
         .attr('x1', (d) => (d.source as unknown as Node).x ?? 0)
         .attr('y1', (d) => (d.source as unknown as Node).y ?? 0)
         .attr('x2', (d) => (d.target as unknown as Node).x ?? 0)
-        .attr('y2', (d) => (d.target as unknown as Node).y ?? 0);
+        .attr('y2', (d) => (d.target as Node).y ?? 0);
 
-      nodeGroup.attr('transform', (d) => `translate(${d.x ?? 0},${d.y ?? 0})`);
+      nodeGroup.attr('transform', (d) => `translate(${(d as Node).x ?? 0},${(d as Node).y ?? 0})`);
     });
 
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.1, 10])
       .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, unknown>) => {
-        svg.attr('transform', event.transform.toString());
+        svg.selectAll('g').attr('transform', event.transform.toString());
       });
 
     svg.call(zoom);
-  }, [filteredData, egoCenter]);
+  }, [filteredData, egoCenter, selectedWords]);
 
   const handleFilterChange = (type: 'nodes' | 'edges', value: string) => {
     setFilters((prevFilters) => ({
@@ -193,7 +204,8 @@ const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData }) => {
   };
 
   return (
-    <div>
+    <div className="graph-display">
+      <h2>Graph Visualization</h2>
       <div>
         <h3>Node Filters</h3>
         {uniqueNodeTypes.map((type, index) => (
@@ -225,7 +237,7 @@ const GraphDisplay: React.FC<GraphDisplayProps> = ({ graphData }) => {
           onChange={handleEgoDepthChange}
         />
       </div>
-      <svg ref={svgRef} width="800" height="600" />
+      <svg ref={svgRef} width="100%" height="100%" />
     </div>
   );
 };
